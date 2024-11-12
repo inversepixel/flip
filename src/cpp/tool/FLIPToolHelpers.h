@@ -69,8 +69,6 @@
 #include "filename.h"
 #include "pooling.h"
 
-#include "fpng.h"
-
 namespace FLIPTool
 {
     inline std::string f2s(float value, size_t decimals = 4)
@@ -478,8 +476,6 @@ namespace FLIPTool
 
     int execute(commandline commandLine)
     {
-        fpng::fpng_init();
-
         auto timeStart = std::chrono::high_resolution_clock::now();
 
         std::string FLIPString = "FLIP";
