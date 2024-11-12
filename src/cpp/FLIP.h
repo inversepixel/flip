@@ -416,9 +416,16 @@ namespace FLIP
 
             // The default illuminant is D65.
             XYZ = XYZ * invReferenceIlluminant;
+#if 1
             XYZ.x = (XYZ.x > deltaCube ? powf(XYZ.x, 1.0f / 3.0f) : factor * XYZ.x + term);
             XYZ.y = (XYZ.y > deltaCube ? powf(XYZ.y, 1.0f / 3.0f) : factor * XYZ.y + term);
             XYZ.z = (XYZ.z > deltaCube ? powf(XYZ.z, 1.0f / 3.0f) : factor * XYZ.z + term);
+#else
+            constexpr float oneDiv3 = 0.3333333333f;
+            XYZ.x = (XYZ.x > deltaCube ? powf(XYZ.x, oneDiv3) : factor * XYZ.x + term);
+            XYZ.y = (XYZ.y > deltaCube ? powf(XYZ.y, oneDiv3) : factor * XYZ.y + term);
+            XYZ.z = (XYZ.z > deltaCube ? powf(XYZ.z, oneDiv3) : factor * XYZ.z + term);
+#endif
             float L = 116.0f * XYZ.y - 16.0f;
             float a = 500.0f * (XYZ.x - XYZ.y);
             float b = 200.0f * (XYZ.y - XYZ.z);
@@ -429,8 +436,13 @@ namespace FLIP
         {
             // The default illuminant is D65.
             float Y = (Lab.x + 16.0f) / 116.0f;
+#if 1
             float X = Lab.y / 500.0f + Y;
             float Z = Y - Lab.z / 200.0f;
+#else
+            float X = Lab.y * 0.002f + Y;
+            float Z = Y - Lab.z * 0.005f;
+#endif
 
             const float delta = 6.0f / 29.0f;
             const float factor = 3.0f * delta * delta;

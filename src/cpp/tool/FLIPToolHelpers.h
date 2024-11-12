@@ -540,6 +540,9 @@ namespace FLIPTool
         }
 
         FLIP::image<FLIP::color3> referenceImage;
+        FLIP::image<FLIP::color3> testImage;
+
+#if 1 // No parallel load.
         bool refImageOk = ImageHelpers::load(referenceImage, referenceFileName.toString());   // Load reference image.
         if (!refImageOk)
         {
@@ -560,7 +563,6 @@ namespace FLIPTool
 
         uint32_t testFileCount = 0;
         // Loop over the test images files to be FLIP:ed against the reference image.
-        FLIP::image<FLIP::color3> testImage;
         for (auto& testFileNameString : commandLine.getOptionValues("test"))
         {
             pooledValues = FLIPPooling::pooling<float>(100); // Reset pooledValues to remove accumulation issues.
@@ -609,6 +611,105 @@ namespace FLIPTool
                 firstTestFileName = testFileName;
             }
         }
+#else // Parallel load
+        testFileName = commandLine.getOptionValues("test")[0];      // TODO: perhaps check so there is at least 1 element.
+        if (!std::filesystem::exists(testFileName.toString()))
+        {
+            std::cout << "Error: test image file <" << testFileName.toString() << "> does not exist. Exiting\n";
+            exit(EXIT_FAILURE);
+        }
+
+        bool imagesOk[2];
+        FLIP::image<FLIP::color3>* images[2] = { &referenceImage, &testImage };
+        std::string fileNames[2] = { referenceFileName.toString(),  testFileName.toString() };
+
+#pragma omp parallel for
+        //#pragma omp parallel for schedule(static)
+        for (int idx = 0; idx < 2; idx++)
+        {
+            imagesOk[idx] = ImageHelpers::load(*images[idx], fileNames[idx]);
+            if (!imagesOk[idx])
+            {
+                std::cout << "Error: could not read test file <" << fileNames[idx] << ">. Exiting\n";
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        if (referenceImage.getWidth() != testImage.getWidth() || referenceImage.getHeight() != testImage.getHeight())
+        {
+            std::cout << "Error: reference <" << referenceImage.getWidth() << "x" << referenceImage.getHeight() << "> and test <" << testImage.getWidth() << "x" << testImage.getHeight() << "> images must be of equal dimensions. Exiting\n";
+            exit(EXIT_FAILURE);
+        }
+
+        if (!bUseHDR)
+        {
+            referenceImage.sRGBToLinearRGB();
+        }
+
+        // Save firstTestFileName and firstPooledValue for optional overlapped histogram.
+        const bool saveOverlappedHistogram = commandLine.optionSet("histogram") && commandLine.getOptionValues("test").size() == 2;
+        FLIP::filename firstTestFileName;
+        FLIPPooling::pooling<float> pooledValues;
+        FLIPPooling::pooling<float> firstPooledValues;
+
+        uint32_t testFileCount = 0;
+        // Loop over the test images files to be FLIP:ed against the reference image.
+        std::vector<std::string>& testFileNameStrings = commandLine.getOptionValues("test");
+        for (size_t testFileIdx = 0; testFileIdx < testFileNameStrings.size(); testFileIdx++)
+        {
+            pooledValues = FLIPPooling::pooling<float>(100); // Reset pooledValues to remove accumulation issues.
+            std::vector<FLIP::image<float>*> intermediateLDRFLIPImages;
+            std::vector<FLIP::image<FLIP::color3>*> intermediateLDRImages;
+
+            if (!bUseHDR)
+            {
+                testImage.sRGBToLinearRGB();
+            }
+
+            FLIP::image<float> errorMapFLIP(referenceImage.getWidth(), referenceImage.getHeight(), 0.0f);
+            FLIP::image<float> maxErrorExposureMap(referenceImage.getWidth(), referenceImage.getHeight());
+
+            auto t0 = std::chrono::high_resolution_clock::now();
+            FLIP::evaluate(referenceImage, testImage, bUseHDR, parameters, errorMapFLIP, maxErrorExposureMap, returnLDRFLIPImages, intermediateLDRFLIPImages, returnLDRImages, intermediateLDRImages);
+            float time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - t0).count() / 1000000.0f;
+
+            saveErrorAndExposureMaps(bUseHDR, commandLine, parameters, basename, errorMapFLIP, maxErrorExposureMap, destinationDirectory, referenceFileName, testFileName, histogramFileName, txtFileName, flipFileName, exposureFileName, verbosity, testFileCount);
+            saveIntermediateHDRFLIPOutput(commandLine, parameters, basename, flipFileName, referenceFileName, testFileName, destinationDirectory, intermediateLDRFLIPImages, intermediateLDRImages);
+            gatherStatisticsAndSaveOutput(commandLine, errorMapFLIP, pooledValues, destinationDirectory, referenceFileName, testFileName, histogramFileName, txtFileName, flipFileName, exposureFileName, FLIPString, time, ++testFileCount, saveOverlappedHistogram, bUseHDR, verbosity);
+
+            // Save first set of results for overlapped histogram.
+            if (saveOverlappedHistogram && testFileCount == 1)
+            {
+                firstPooledValues = pooledValues;
+                firstTestFileName = testFileName;
+            }
+
+            if (testFileIdx < testFileNameStrings.size() - 1)
+            {
+                testFileName = testFileNameStrings[testFileIdx + 1];
+                printf("testFileNameString = <%s>\n", testFileName.fileNameToString().c_str());
+
+                if (!std::filesystem::exists(testFileName.toString()))
+                {
+                    std::cout << "Error: test image file <" << testFileName.toString() << "> does not exist. Exiting\n";
+                    exit(EXIT_FAILURE);
+                }
+
+                bool testImageOk = ImageHelpers::load(testImage, testFileName.toString());     // Load test image.
+                if (!testImageOk)
+                {
+                    std::cout << "Error: could not read test file <" << testFileName.toString() << ">. Exiting\n";
+                    exit(EXIT_FAILURE);
+                }
+                if (referenceImage.getWidth() != testImage.getWidth() || referenceImage.getHeight() != testImage.getHeight())
+                {
+                    std::cout << "Error: reference <" << referenceImage.getWidth() << "x" << referenceImage.getHeight() << "> and test <" << testImage.getWidth() << "x" << testImage.getHeight() << "> images must be of equal dimensions. Exiting\n";
+                    exit(EXIT_FAILURE);
+                }
+            }
+
+        }
+#endif
 
         if (saveOverlappedHistogram)
         {
