@@ -26,6 +26,9 @@
     <ClInclude Include="pooling.h">
       <Filter>tool</Filter>
     </ClInclude>
+    <ClInclude Include="fpng.h">
+      <Filter>tool</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="tool">
@@ -34,6 +37,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="FLIP-tool.cpp">
+      <Filter>tool</Filter>
+    </ClCompile>
+    <ClCompile Include="fpng.cpp">
       <Filter>tool</Filter>
     </ClCompile>
   </ItemGroup>

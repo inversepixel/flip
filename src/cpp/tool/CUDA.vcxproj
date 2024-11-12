@@ -15,6 +15,7 @@
     <ClInclude Include="commandline.h" />
     <ClInclude Include="filename.h" />
     <ClInclude Include="FLIPToolHelpers.h" />
+    <ClInclude Include="fpng.h" />
     <ClInclude Include="imagehelpers.h" />
     <ClInclude Include="pooling.h" />
     <ClInclude Include="stb_image.h" />
@@ -29,6 +30,7 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="fpng.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{F9C72EA1-F42E-4640-8E03-C9AE310AAEB3}</ProjectGuid>

@@ -94,6 +94,7 @@
     <ClInclude Include="commandline.h" />
     <ClInclude Include="filename.h" />
     <ClInclude Include="FLIPToolHelpers.h" />
+    <ClInclude Include="fpng.h" />
     <ClInclude Include="imagehelpers.h" />
     <ClInclude Include="pooling.h" />
     <ClInclude Include="stb_image.h" />
@@ -102,6 +103,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="FLIP-tool.cpp" />
+    <ClCompile Include="fpng.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

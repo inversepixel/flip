@@ -60,6 +60,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#include "fpng.h"
+
 namespace ImageHelpers
 {
     bool ldrLoad(const std::string& filename, int& imgWidth, int& imgHeight, float*& pixels)
@@ -268,10 +270,12 @@ namespace ImageHelpers
         image.synchronizeHost();
 #endif
 
+        const int w = image.getWidth();
+        const int h = image.getHeight();
 #pragma omp parallel for
-        for (int y = 0; y < image.getHeight(); y++)
+        for (int y = 0; y < h; y++)
         {
-            for (int x = 0; x < image.getWidth(); x++)
+            for (int x = 0; x < w; x++)
             {
                 int index = image.index(x, y);
                 FLIP::color3 color = image.get(x, y);
@@ -282,7 +286,8 @@ namespace ImageHelpers
             }
         }
 
-        int ok = stbi_write_png(filename.c_str(), image.getWidth(), image.getHeight(), 3, pixels, 3 * image.getWidth());
+//        int ok = stbi_write_png(filename.c_str(), image.getWidth(), image.getHeight(), 3, pixels, 3 * image.getWidth());
+        bool ok = fpng::fpng_encode_image_to_file(filename.c_str(), pixels, image.getWidth(), image.getHeight(), 3);
         delete[] pixels;
 
         return (ok != 0);
