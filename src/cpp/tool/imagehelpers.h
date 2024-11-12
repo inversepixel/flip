@@ -83,7 +83,6 @@ namespace ImageHelpers
                 pixels[linearIdx + 0] = ldrPixels[linearIdx + 0] / 255.0f;
                 pixels[linearIdx + 1] = ldrPixels[linearIdx + 1] / 255.0f;
                 pixels[linearIdx + 2] = ldrPixels[linearIdx + 2] / 255.0f;
-
             }
         }
         delete[] ldrPixels;
@@ -286,8 +285,11 @@ namespace ImageHelpers
             }
         }
 
-//        int ok = stbi_write_png(filename.c_str(), image.getWidth(), image.getHeight(), 3, pixels, 3 * image.getWidth());
+#if 0
+        int ok = stbi_write_png(filename.c_str(), image.getWidth(), image.getHeight(), 3, pixels, 3 * image.getWidth());
+#else
         bool ok = fpng::fpng_encode_image_to_file(filename.c_str(), pixels, image.getWidth(), image.getHeight(), 3);
+#endif
         delete[] pixels;
 
         return (ok != 0);

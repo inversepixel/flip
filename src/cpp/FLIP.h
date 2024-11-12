@@ -659,6 +659,30 @@ namespace FLIP
         pDstImage[i] = errorFLIP;
     }
 
+    __global__ static void kernelCopyExposeToneMapClamp(color3* pDstImage, color3* pSrcImage, float powerTwoExposureLevel, int toneMapper, const int3 dim)
+    {
+        int x = blockIdx.x * blockDim.x + threadIdx.x;
+        int y = blockIdx.y * blockDim.y + threadIdx.y;
+        int z = blockIdx.z * blockDim.z + threadIdx.z;
+        int i = (z * dim.y + y) * dim.x + x;
+
+        if (x >= dim.x || y >= dim.y || z >= dim.z) return;
+
+        if (toneMapper == 0)
+        {
+            color3 color = pSrcImage[i] * powerTwoExposureLevel;
+            float luminance = color3::linearRGBToLuminance(color);
+            float factor = 1.0f / (1.0f + luminance);
+            pDstImage[i] = color3::clamp(color * factor);
+            return;
+        }
+
+        const float* tc = ToneMappingCoefficients[toneMapper];
+        color3 c = pSrcImage[i] * powerTwoExposureLevel;
+        color3 c2 = c * c;
+        pDstImage[i] = color3::clamp(color3((c2 * tc[0] + c * tc[1] + tc[2]) / (c2 * tc[3] + c * tc[4] + tc[5])));
+    }
+
     __global__ static void kernelSetMaxExposure(float* pDstErrorMap, float* pSrcErrorMap, float* pExposureMap, const int3 dim, float exposure)
     {
         int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1045,8 +1069,14 @@ namespace FLIP
         dim3 mBlockDim, mGridDim;
 #endif
     protected:
-        bool allocateHost(void)
+        bool allocateHost(const int3 dim)
         {
+            if (this->mvpHostData && (dim.x == mDim.x && dim.y == mDim.y && dim.z == mDim.z))
+                return true;
+
+            this->mDim = dim;
+            this->mArea = dim.x * dim.y;
+            this->mVolume = dim.x * dim.y * dim.z;
             this->mvpHostData = (T*)malloc(this->mVolume * sizeof(T));
 
             if (this->mvpHostData == nullptr)
@@ -1075,14 +1105,11 @@ namespace FLIP
 #endif
         void init(const int3 dim, bool bClear = false, T clearColor = T(0.0f))
         {
-            this->mDim = dim;
-            this->mArea = dim.x * dim.y;
-            this->mVolume = dim.x * dim.y * dim.z;
-
+            allocateHost(dim);
 #ifdef FLIP_ENABLE_CUDA
-            this->mGridDim.x = (this->mDim.x + this->mBlockDim.x - 1) / this->mBlockDim.x;
-            this->mGridDim.y = (this->mDim.y + this->mBlockDim.y - 1) / this->mBlockDim.y;
-            this->mGridDim.z = (this->mDim.z + this->mBlockDim.z - 1) / this->mBlockDim.z;
+            this->mGridDim.x = (dim.x + this->mBlockDim.x - 1) / this->mBlockDim.x;
+            this->mGridDim.y = (dim.y + this->mBlockDim.y - 1) / this->mBlockDim.y;
+            this->mGridDim.z = (dim.z + this->mBlockDim.z - 1) / this->mBlockDim.z;
 
             cudaError_t cudaError = cudaSetDevice(0);
             if (cudaError != cudaSuccess)
@@ -1095,7 +1122,6 @@ namespace FLIP
             allocateDevice();
             this->mState = CudaTensorState::ALLOCATED;
 #endif
-            allocateHost();
 
             if (bClear)
             {
@@ -1395,7 +1421,6 @@ namespace FLIP
 
         void toneMap(std::string tm)
         {
-            int toneMapper = 1;
             if (tm == "reinhard")
             {
                 for (int z = 0; z < this->getDepth(); z++)
@@ -1415,6 +1440,7 @@ namespace FLIP
                 return;
             }
 
+            int toneMapper = 1;
             if (tm == "aces")
                 toneMapper = 1;
             if (tm == "hable")
@@ -1712,6 +1738,7 @@ namespace FLIP
         {
         }
 
+
 #ifndef FLIP_ENABLE_CUDA
         T get(int x, int y) const
         {
@@ -1722,6 +1749,17 @@ namespace FLIP
         {
             this->mvpHostData[this->index(x, y)] = value;
         }
+
+        T get(int idx) const
+        {
+            return this->mvpHostData[idx];
+        }
+
+        void set(int idx, T value)
+        {
+            this->mvpHostData[idx] = value;
+        }
+
 #else
         T get(int x, int y)
         {
@@ -1735,7 +1773,64 @@ namespace FLIP
             this->mvpHostData[this->index(x, y)] = value;
             this->setState(CudaTensorState::HOST_ONLY);
         }
+
+        T get(int idx)
+        {
+            this->synchronizeHost();
+            return this->mvpHostData[idx];
+        }
+
+        void set(int idx, T value)
+        {
+            this->synchronizeHost();
+            this->mvpHostData[ix] = value;
+            this->setState(CudaTensorState::HOST_ONLY);
+        }
 #endif
+
+#ifndef FLIP_ENABLE_CUDA
+        void copyExposeToneMapClamp(image& srcImage, float exposureLevel, std::string toneMapperStr)
+        {
+            const float powerTwoExposureLevel = std::pow(2.0f, exposureLevel);
+            const int w = this->getWidth();
+            const int h = this->getHeight();
+            if (toneMapperStr == "reinhard")
+            {
+#pragma omp parallel for
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = 0; x < w; x++)
+                    {
+                        color3 color = srcImage.get(x, y) * powerTwoExposureLevel;
+                        float luminance = color3::linearRGBToLuminance(color);
+                        float factor = 1.0f / (1.0f + luminance);
+                        this->set(x, y, color3::clamp(color * factor));
+                    }
+                }
+                return;
+            }
+
+            int toneMapper = 1;
+            if (toneMapperStr == "aces")
+                toneMapper = 1;
+            if (toneMapperStr == "hable")
+                toneMapper = 2;
+
+            const float* tc = ToneMappingCoefficients[toneMapper];
+#pragma omp parallel for
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    const color3 c = srcImage.get(x,y) * powerTwoExposureLevel;
+                    const color3 c2 = c * c;
+                    color3 color = color3((c2 * tc[0] + c * tc[1] + tc[2]) / (c2 * tc[3] + c * tc[4] + tc[5]));
+                    this->set(x,y, color3::clamp(color));
+                }
+            }
+        }
+#endif
+
 
         // For details, see separatedConvolutions.pdf in the FLIP repository:
         // https://github.com/NVlabs/flip/blob/main/misc/separatedConvolutions.pdf.
@@ -1861,19 +1956,31 @@ namespace FLIP
 
                         const color3 weightsYCx = filterYCx.get(ix + halfFilterWidth, 0);
                         const color3 weightsCz = filterCz.get(ix + halfFilterWidth, 0);
+#if 0
                         const color3 referenceColor = referenceImage.get(xx, y);
                         const color3 testColor = testImage.get(xx, y);
-
+#else
+                        const int idx = y * w + xx;
+                        const color3 referenceColor = referenceImage.get(idx);
+                        const color3 testColor = testImage.get(idx);
+#endif
                         intermediateYCxReference += color3(weightsYCx.x * referenceColor.x, weightsYCx.y * referenceColor.y, 0.0f);
                         intermediateYCxTest += color3(weightsYCx.x * testColor.x, weightsYCx.y * testColor.y, 0.0f);
                         intermediateCzReference += color3(weightsCz.x * referenceColor.z, weightsCz.y * referenceColor.z, 0.0f);
                         intermediateCzTest += color3(weightsCz.x * testColor.z, weightsCz.y * testColor.z, 0.0f);
                     }
-
+#if 0
                     intermediateYCxImageReference.set(x, y, intermediateYCxReference);
                     intermediateYCxImageTest.set(x, y, intermediateYCxTest);
                     intermediateCzImageReference.set(x, y, intermediateCzReference);
                     intermediateCzImageTest.set(x, y, intermediateCzTest);
+#else
+                    const int idx = y * w + x;
+                    intermediateYCxImageReference.set(idx, intermediateYCxReference);
+                    intermediateYCxImageTest.set(idx, intermediateYCxTest);
+                    intermediateCzImageReference.set(idx, intermediateCzReference);
+                    intermediateCzImageTest.set(idx, intermediateCzTest);
+#endif
                 }
             }
 
@@ -1894,10 +2001,19 @@ namespace FLIP
 
                         const color3 weightsYCx = filterYCx.get(iy + halfFilterWidth, 0);
                         const color3 weightsCz = filterCz.get(iy + halfFilterWidth, 0);
+
+#if 0
                         const color3 intermediateYCxReference = intermediateYCxImageReference.get(x, yy);
                         const color3 intermediateYCxTest = intermediateYCxImageTest.get(x, yy);
                         const color3 intermediateCzReference = intermediateCzImageReference.get(x, yy);
                         const color3 intermediateCzTest = intermediateCzImageTest.get(x, yy);
+#else
+                        const int idx = yy * w + x;
+                        const color3 intermediateYCxReference = intermediateYCxImageReference.get(idx);
+                        const color3 intermediateYCxTest = intermediateYCxImageTest.get(idx);
+                        const color3 intermediateCzReference = intermediateCzImageReference.get(idx);
+                        const color3 intermediateCzTest = intermediateCzImageTest.get(idx);
+#endif
 
                         filteredYCxReference += color3(weightsYCx.x * intermediateYCxReference.x, weightsYCx.y * intermediateYCxReference.y, 0.0f);
                         filteredYCxTest += color3(weightsYCx.x * intermediateYCxTest.x, weightsYCx.y * intermediateYCxTest.y, 0.0f);
@@ -1971,9 +2087,14 @@ namespace FLIP
                         int xx = Min(Max(0, x + ix), w - 1);
 
                         const color3 featureWeights = featureFilter.get(ix + halfFilterWidth, 0);
+#if 0
                         float yReference = referenceImage.get(xx, y).x;
                         float yTest = testImage.get(xx, y).x;
-
+#else
+                        const int idx = y * w + xx;
+                        float yReference = referenceImage.get(idx).x;
+                        float yTest = testImage.get(idx).x;
+#endif
                         // Normalize the Y values to [0,1].
                         float yReferenceNormalized = yReference * oneOver116 + sixteenOver116;
                         float yTestNormalized = yTest * oneOver116 + sixteenOver116;
@@ -1988,8 +2109,14 @@ namespace FLIP
                         gaussianFilteredReference += featureWeights.x * yReferenceNormalized;
                         gaussianFilteredTest += featureWeights.x * yTestNormalized;
                     }
+#if 0
                     intermediateFeaturesImageReference.set(x, y, color3(dxReference, ddxReference, gaussianFilteredReference));
                     intermediateFeaturesImageTest.set(x, y, color3(dxTest, ddxTest, gaussianFilteredTest));
+#else
+                    const int idx = y * w + x;
+                    intermediateFeaturesImageReference.set(idx, color3(dxReference, ddxReference, gaussianFilteredReference));
+                    intermediateFeaturesImageTest.set(idx, color3(dxTest, ddxTest, gaussianFilteredTest));
+#endif
                 }
             }
 
@@ -2010,8 +2137,14 @@ namespace FLIP
                         int yy = Min(Max(0, y + iy), h - 1);
 
                         const color3 featureWeights = featureFilter.get(iy + halfFilterWidth, 0);
+#if 0
                         const color3 intermediateFeaturesReference = intermediateFeaturesImageReference.get(x, yy);
                         const color3 intermediateFeatureTest = intermediateFeaturesImageTest.get(x, yy);
+#else
+                        const int idx = yy * w + x;
+                        const color3 intermediateFeaturesReference = intermediateFeaturesImageReference.get(idx);
+                        const color3 intermediateFeatureTest = intermediateFeaturesImageTest.get(idx);
+#endif
 
                         // Intermediate images (1st and 2nd derivative in x) multiplied by Gaussian.
                         dxReference += featureWeights.x * intermediateFeaturesReference.x;
@@ -2035,11 +2168,16 @@ namespace FLIP
                     const float pointDifference = std::abs(pointValueRef - pointValueTest);
 
                     const float featureDifference = std::pow(normalizationFactor * Max(edgeDifference, pointDifference), FLIPConstants.gqf);
+#if 0
                     const float colorDifference = this->get(x, y);
-
                     const float errorFLIP = std::pow(colorDifference, 1.0f - featureDifference);
-
                     this->set(x, y, errorFLIP);
+#else
+                    const int idx = y * w + x;
+                    const float colorDifference = this->get(idx);
+                    const float errorFLIP = std::pow(colorDifference, 1.0f - featureDifference);
+                    this->set(idx, errorFLIP);
+#endif
                 }
             }
         }
@@ -2183,6 +2321,24 @@ namespace FLIP
             image<T>::checkStatus("kernelExpose");
             this->setState(CudaTensorState::DEVICE_ONLY);
         }
+
+        void copyExposeToneMapClamp(image& srcImage, float exposureLevel, std::string toneMapperStr)
+        {
+            srcImage.synchronizeDevice();
+            int toneMapper = 1;
+            if (toneMapperStr == "reinhard")
+                toneMapper = 0;
+            else if (toneMapperStr == "aces")
+                toneMapper = 1;
+            else if (toneMapperStr == "hable")
+                toneMapper = 2;
+            float m = std::pow(2.0f, exposureLevel);
+
+            FLIP::kernelCopyExposeToneMapClamp << <this->mGridDim, this->mBlockDim >> > (this->getDeviceData(), srcImage.getDeviceData(), m, toneMapper, this->mDim);
+            image<T>::checkStatus("kernelCopyExposeToneMapClamp");
+            this->setState(CudaTensorState::DEVICE_ONLY);
+        }
+
 #endif
         void computeExposures(const std::string& tm, float& startExposure, float& stopExposure)
         {
@@ -2375,6 +2531,10 @@ namespace FLIP
             for (int i = 0; i < parameters.numExposures; i++)
             {
                 float exposure = parameters.startExposure + i * exposureStepSize;
+#if 1
+                rImage.copyExposeToneMapClamp(referenceImage, exposure, parameters.tonemapper);     // TODO: this did not help perf?!
+                tImage.copyExposeToneMapClamp(testImage, exposure, parameters.tonemapper);
+#else
                 rImage.copy(referenceImage);
                 tImage.copy(testImage);
                 rImage.expose(exposure);
@@ -2383,6 +2543,7 @@ namespace FLIP
                 tImage.toneMap(parameters.tonemapper);
                 rImage.clamp();
                 tImage.clamp();
+#endif
                 if (returnIntermediateLDRImages)
                 {
                     intermediateLDRImages.push_back(new FLIP::image<FLIP::color3>(rImage));

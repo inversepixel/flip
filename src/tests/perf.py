@@ -58,6 +58,23 @@ def get_time(string):
     sec_pos = string.find(' seconds')
     return float(string[colon_pos + 2:sec_pos])
 
+def huber_estimate(samples, sigma_hat, k = 1.345, num_iter = 10):
+	# https://www.sciencedirect.com/topics/mathematics/location-estimator#:~:text=The%20most%20popular%20robust%20location,not%20change%20the%20median%20much.
+	# k from https://cran.r-project.org/web/packages/robustbase/vignettes/psi_functions.pdf
+	mu_hat = np.median(samples)
+	for _ in range(num_iter):
+		z = (samples - mu_hat) / sigma_hat
+		nom = np.minimum(k, np.maximum(-k, z)).sum()
+		denom = np.where(abs(z) > k, 0, 1).sum()
+		mu_hat = mu_hat + sigma_hat * nom / denom
+	return mu_hat
+
+def compute_stable_average(samples):
+    samples_std = 1.4826 * np.median(abs(samples - np.median(samples)))
+    return huber_estimate(samples, samples_std)
+
+
+
 if __name__ == '__main__':
     """
     Test script. Runs FLIP for both LDR and HDR using one of CUDA/CPP/PYTHON based on the commandline argument.
@@ -121,10 +138,10 @@ if __name__ == '__main__':
             sum_FLIP_time = np.array(sum_FLIP_time)
             sum_total_time = np.array(sum_total_time)
 
-            print(f"{np.average(sum_FLIP_time):.4f}")
-            print(f"{np.average(sum_total_time):.4f}")
-    #            print(f"{helper_string}-FLIP evaluation time: {np.average(sum_FLIP_time):.4f}")
-#            print(f"{helper_string}-FLIP total time     : {np.average(sum_total_time):.4f}")
+#            print(f"{np.average(sum_FLIP_time):.4f}  {compute_stable_average(sum_FLIP_time):.4f}")
+#            print(f"{np.average(sum_total_time):.4f}  {compute_stable_average(sum_total_time):.4f}")
+            print(f"{compute_stable_average(sum_FLIP_time):.4f}")
+            print(f"{compute_stable_average(sum_total_time):.4f}")
 
 
 

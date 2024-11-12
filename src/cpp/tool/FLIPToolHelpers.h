@@ -560,6 +560,7 @@ namespace FLIPTool
 
         uint32_t testFileCount = 0;
         // Loop over the test images files to be FLIP:ed against the reference image.
+        FLIP::image<FLIP::color3> testImage;
         for (auto& testFileNameString : commandLine.getOptionValues("test"))
         {
             pooledValues = FLIPPooling::pooling<float>(100); // Reset pooledValues to remove accumulation issues.
@@ -573,7 +574,6 @@ namespace FLIPTool
                 exit(EXIT_FAILURE);
             }
             
-            FLIP::image<FLIP::color3> testImage;
             bool testImageOk = ImageHelpers::load(testImage, testFileName.toString());     // Load test image.
             if (!testImageOk)
             {
